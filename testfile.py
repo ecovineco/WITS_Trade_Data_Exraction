@@ -19,9 +19,17 @@ REPORTERS = {
     "Argentina": "ARG",
 }
 
-# Partners - keep as originally requested (NOT EU), plus World (added below too)
+# Partners - keep as originally requested (NOT EU), plus World (will be filled as Rest of World)
 BASE_PARTNERS = ["United States", "China", "Russian Federation", "Canada", "Argentina", "Chile"]
 PARTNERS = BASE_PARTNERS + ["World"]
+
+# EU member states to exclude from Rest of World calculation
+EU_COUNTRIES = [
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czech Republic", "Denmark",
+    "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Ireland", "Italy",
+    "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands", "Poland", "Portugal",
+    "Romania", "Slovak Republic", "Slovenia", "Spain", "Sweden",
+]
 
 YEARS = [2020, 2021, 2022, 2023, 2024]
 FLOWS = ["I", "E"]  # I=Import, E=Export
@@ -69,13 +77,7 @@ def read_by_hs6product_sheet(excel_bytes: bytes) -> pd.DataFrame:
         bio.seek(0)
         return pd.read_excel(bio, sheet_name=0)
 
-def get_qty_and_value_sums_for_partners(df: pd.DataFrame, partners: list[str]) -> dict[str, tuple[float, float]]:
-    """
-    Returns dict: partner -> (quantity_kg_sum, trade_value_1000usd_sum)
-
-    Quantity logic unchanged: filter to 'Kg' rows, then sum 'Quantity'.
-    Trade value summed on the same rows; later multiply by 1000 for USD.
-    """
+def _prep_kg_rows(df: pd.DataFrame) -> pd.DataFrame:
     required = ["Partner", "Quantity", "Quantity Unit", "Trade Value 1000USD"]
     missing = [c for c in required if c not in df.columns]
     if missing:
@@ -92,6 +94,14 @@ def get_qty_and_value_sums_for_partners(df: pd.DataFrame, partners: list[str]) -
     d["Quantity"] = pd.to_numeric(d["Quantity"], errors="coerce").fillna(0.0)
     d["Trade Value 1000USD"] = pd.to_numeric(d["Trade Value 1000USD"], errors="coerce").fillna(0.0)
 
+    return d
+
+def get_qty_and_value_sums_for_partners(df: pd.DataFrame, partners: list[str]) -> dict[str, tuple[float, float]]:
+    """
+    Returns dict: partner -> (quantity_kg_sum, trade_value_1000usd_sum)
+    """
+    d = _prep_kg_rows(df)
+
     g = (
         d[d["Partner"].isin(partners)]
         .groupby("Partner", as_index=True)[["Quantity", "Trade Value 1000USD"]]
@@ -105,6 +115,20 @@ def get_qty_and_value_sums_for_partners(df: pd.DataFrame, partners: list[str]) -
         else:
             out[p] = (0.0, 0.0)
     return out
+
+def get_rest_of_world_sum(df: pd.DataFrame, exclude_partners: set[str]) -> tuple[float, float]:
+    """
+    Rest of World = sum over ALL partners except:
+      - World
+      - European Union
+      - EU member states listed above
+      - the six BASE_PARTNERS
+    Aggregated on Kg rows.
+    Returns (quantity_kg_sum, trade_value_1000usd_sum)
+    """
+    d = _prep_kg_rows(df)
+    d = d[~d["Partner"].isin(exclude_partners)]
+    return (float(d["Quantity"].sum()), float(d["Trade Value 1000USD"].sum()))
 
 def inverse_flow(flow: str) -> str:
     return "E" if flow == "I" else "I"
@@ -130,6 +154,8 @@ val1000_acc = {
     for flow in FLOWS
 }
 
+EXCLUDE_FOR_ROW = set(BASE_PARTNERS + [REGION_LABEL_EU, "World"] + EU_COUNTRIES)
+
 for reporter_label, reporter_code in REPORTERS.items():
     for year in YEARS:
         for flow in FLOWS:
@@ -145,7 +171,13 @@ for reporter_label, reporter_code in REPORTERS.items():
                         cache_path.write_bytes(excel_bytes)
 
                 sheet_df = read_by_hs6product_sheet(excel_bytes)
+
+                # Usual partners (six + World)
                 sums = get_qty_and_value_sums_for_partners(sheet_df, PARTNERS)
+
+                # CHANGE: fill "World" as Rest of World by summing all partners except excluded list
+                row_qty, row_val1000 = get_rest_of_world_sum(sheet_df, EXCLUDE_FOR_ROW)
+                sums["World"] = (row_qty, row_val1000)
 
                 for partner, (qty, val1000) in sums.items():
                     qty_acc[(reporter_label, partner, year, flow)] += qty
@@ -153,7 +185,7 @@ for reporter_label, reporter_code in REPORTERS.items():
 
 # -----------------------------
 # Build final table:
-# 1) All reporters with partners = BASE_PARTNERS + World
+# 1) All reporters with partners = BASE_PARTNERS + World (World will later be renamed to Rest of World)
 # 2) Extra EU<->Reporter rows: add partner="European Union" for each non-EU reporter using EU data with inverse flow
 # -----------------------------
 rows = []
@@ -213,6 +245,9 @@ out = pd.DataFrame(rows)
 
 # Remove rows where Reporter and Partner are the same
 out = out[out["Reporter"] != out["Partner"]].copy()
+
+# CHANGE: rename "World" rows (already computed as Rest of World)
+out.loc[out["Partner"] == "World", "Partner"] = "Rest of World"
 
 out = out.sort_values(["Reporter", "Partner", "Year", "Tradeflow"]).reset_index(drop=True)
 
