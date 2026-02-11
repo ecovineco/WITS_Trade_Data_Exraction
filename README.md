@@ -12,8 +12,9 @@ This script downloads international trade data from the World Bank WITS download
 Outputs are saved as both **CSV** and **Excel**.
 
 ## What you need to edit
-Only one line is intended to be edited, the first line in the code, defining the array ```python PRODUCTS```
+Only one line is intended to be edited, the first line in the code, defining the array ```PRODUCTS```
 
+Example:
 ```python
 PRODUCTS = ["430310", "430310"]
 ```
