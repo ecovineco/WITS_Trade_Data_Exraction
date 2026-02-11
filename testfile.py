@@ -6,6 +6,12 @@ from pathlib import Path
 # -----------------------------
 # Inputs
 # -----------------------------
+
+# ----> THIS LINE IS THE ONLY LINE YOU NEED TO EDIT, DO NOT EDIT ANYTHING ELSE
+PRODUCTS = ["430310", "430310"]
+# <---- DO NOT ANYTHING ELSE EXCEPT THIS LINE
+
+
 REGION_LABEL_EU = "European Union"
 
 # Reporters to include (output "Reporter" column uses the dict keys; download uses the codes)
@@ -33,7 +39,8 @@ EU_COUNTRIES = [
 
 YEARS = [2020, 2021, 2022, 2023, 2024]
 FLOWS = ["I", "E"]  # I=Import, E=Export
-PRODUCTS = ["430110", "430120", "430130", "430140", "430150", "430160", "430170", "430180", "430190"]
+
+
 
 BASE_URL = "https://wits.worldbank.org/Download.aspx"
 
@@ -51,7 +58,8 @@ CACHE_DIR = Path("wits_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 USE_CACHE = True
 
-OUT_BASENAME = "Fur_Trade_Data_HS_4301"  # output .csv and .xlsx
+OUT_BASENAME = f"Fur_Trade_Data_HS_{PRODUCTS[0][:4]}"
+
 
 # -----------------------------
 # Helpers
