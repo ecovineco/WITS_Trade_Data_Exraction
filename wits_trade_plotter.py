@@ -422,16 +422,87 @@ def rank_top_partners(
     return totals.head(n).index.tolist()
 
 
+def _build_color_map(
+    export_top: list[str],
+    import_top: list[str],
+) -> dict[str, str]:
+    """Build a shared colour mapping for all partners across both panels.
+
+    The union of export and import top-partner lists is assigned colours
+    from the matplotlib ``"tab10"`` palette so that each country always
+    gets the same colour regardless of which panel it appears in.
+
+    Args:
+        export_top: Top partner names for the export panel.
+        import_top: Top partner names for the import panel.
+
+    Returns:
+        Dictionary mapping each unique partner name to a hex colour string.
+    """
+    # Preserve insertion order: export partners first, then any import-only
+    seen: dict[str, None] = {}
+    for name in export_top + import_top:
+        seen.setdefault(name, None)
+    all_partners = list(seen.keys())
+
+    cmap = plt.cm.get_cmap("tab10")
+    return {name: cmap(i % 10) for i, name in enumerate(all_partners)}
+
+
+def _print_data_table(
+    quantity_table: pd.DataFrame,
+    top_partners: list[str],
+    product_label: str,
+    reporter_name: str,
+    scope_label: str,
+    trade_flow_label: str,
+) -> None:
+    """Print a formatted table of the plotted data to stdout.
+
+    Values are displayed in tonnes (kg / 1000), matching the plots.
+
+    Args:
+        quantity_table: DataFrame with partners as rows and years as columns.
+        top_partners: Ordered list of partner names included in the plot.
+        product_label: Human-readable HS code description.
+        reporter_name: Human-readable reporter country name.
+        scope_label: Scope description (e.g. ``"EU"`` or ``"Global"``).
+        trade_flow_label: ``"Exports"`` or ``"Imports"``.
+    """
+    years_to_show = sorted(
+        [y for y in ALL_YEARS if y in quantity_table.columns]
+    )
+    # Filter to top partners that actually exist in the table
+    partners_present = [p for p in top_partners if p in quantity_table.index]
+    if not partners_present:
+        return
+
+    table = quantity_table.loc[partners_present, years_to_show] / 1000
+    table.index.name = "Partner"
+
+    header = f"\n{'=' * 80}"
+    header += f"\n  {product_label} | {reporter_name} | {scope_label} | {trade_flow_label}"
+    header += f"\n  (values in tonnes)"
+    header += f"\n{'=' * 80}"
+    print(header)
+    print(table.to_string(float_format=lambda x: f"{x:,.1f}"))
+    print()
+
+
 def _plot_single_panel(
     ax: plt.Axes,
     quantity_table: pd.DataFrame,
     top_partners: list[str],
     trade_flow_label: str,
+    color_map: dict[str, str],
 ) -> None:
     """Draw time-series curves for the given partners onto a single Axes.
 
     This is a private helper used by :func:`generate_combined_plot` to
-    populate one subplot (either the export or the import panel).
+    populate one subplot (either the export or the import panel).  Colours
+    are taken from ``color_map`` so that both panels share consistent
+    country colours.  A legend is placed in the upper-left corner of each
+    panel.
 
     Args:
         ax: The matplotlib Axes object to draw on.
@@ -439,6 +510,8 @@ def _plot_single_panel(
         top_partners: Ordered list of partner names to plot.
         trade_flow_label: ``"Exports"`` or ``"Imports"`` (used as the
             panel subtitle).
+        color_map: Dictionary mapping partner names to colours, as produced
+            by :func:`_build_color_map`.
     """
     years_to_plot = sorted(
         [y for y in ALL_YEARS if y in quantity_table.columns]
@@ -449,21 +522,23 @@ def _plot_single_panel(
             values = quantity_table.loc[partner, years_to_plot]
             ax.plot(
                 years_to_plot,
-                values,
+                values / 1000,
                 marker="o",
                 linewidth=4,
-                markersize=5,
+                markersize=7,
                 label=partner,
+                color=color_map[partner],
             )
 
-    ax.set_title(trade_flow_label, fontsize=12, fontweight="bold")
-    ax.set_xlabel("Year", fontsize=10)
-    ax.set_ylabel("Quantity (kg)", fontsize=10)
+    ax.set_title(trade_flow_label, fontsize=20, fontweight="bold")
+    ax.set_xlabel("Year", fontsize=15)
+    ax.set_ylabel("Quantity (tonnes)", fontsize=15)
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
     ax.yaxis.set_major_formatter(
         mticker.FuncFormatter(lambda x, _: f"{x:,.0f}")
     )
-    ax.legend(fontsize=8, loc="best")
+    ax.tick_params(axis="both", labelsize=15)
+    ax.legend(fontsize=15, loc="upper left", framealpha=0.9)
     ax.grid(True, alpha=0.3)
 
 
@@ -480,8 +555,13 @@ def generate_combined_plot(
 ) -> None:
     """Create a side-by-side figure with export (left) and import (right) panels.
 
+    Both panels share the same colour for each country via a unified colour
+    map.  Each panel has its own legend pinned to the upper-left corner.
     A source attribution line is placed beneath the figure in small, grey,
-    italic Arial text, following standard data-visualisation conventions.
+    italic Arial text.
+
+    Additionally, the underlying data for both panels is printed to stdout
+    as formatted tables (values in tonnes).
 
     Args:
         export_table: Quantity table (partners × years) for exports.
@@ -496,20 +576,33 @@ def generate_combined_plot(
             ``"Top 5 Global Trade Partners"``.
         output_path: Full file path where the PNG will be saved.
     """
+    # Print data tables to stdout
+    _print_data_table(
+        export_table, export_top, product_label, reporter_name,
+        scope_label, "Exports",
+    )
+    _print_data_table(
+        import_table, import_top, product_label, reporter_name,
+        scope_label, "Imports",
+    )
+
+    # Build a shared colour map from the union of both partner lists
+    color_map = _build_color_map(export_top, import_top)
+
     fig, (ax_export, ax_import) = plt.subplots(
         nrows=1, ncols=2, figsize=(22, 8)
     )
 
     # --- Left panel: Exports ---
-    _plot_single_panel(ax_export, export_table, export_top, "Exports")
+    _plot_single_panel(ax_export, export_table, export_top, "Exports", color_map)
 
     # --- Right panel: Imports ---
-    _plot_single_panel(ax_import, import_table, import_top, "Imports")
+    _plot_single_panel(ax_import, import_table, import_top, "Imports", color_map)
 
     # --- Suptitle spanning both panels ---
     fig.suptitle(
         f"{product_label}: {reporter_name}'s {scope_label}",
-        fontsize=15,
+        fontsize=25,
         fontweight="bold",
         y=1.02,
     )
@@ -520,7 +613,7 @@ def generate_combined_plot(
         SOURCE_TEXT,
         ha="center",
         va="top",
-        fontsize=8,
+        fontsize=15,
         fontstyle="italic",
         color="grey",
         fontfamily="Arial",
